@@ -2,7 +2,7 @@ use crate::{vacant_entry, IdMap, Room, SafeMap, Session, User};
 use anyhow::Result;
 use phira_mp_common::RoomId;
 use serde::Deserialize;
-use std::sync::Arc;
+use std::{fs, sync::Arc};
 use tokio::{net::TcpListener, sync::mpsc, task::JoinHandle};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -11,6 +11,16 @@ use uuid::Uuid;
 pub struct Chart {
     pub id: i32,
     pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ServerConfig {
+    pub monitors: Vec<i32>,
+}
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self { monitors: vec![2] }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +40,7 @@ pub struct Record {
 }
 
 pub struct ServerState {
+    pub config: ServerConfig,
     pub sessions: IdMap<Arc<Session>>,
     pub users: SafeMap<i32, Arc<User>>,
 
@@ -41,21 +52,25 @@ pub struct ServerState {
 pub struct Server {
     state: Arc<ServerState>,
     listener: TcpListener,
-
     lost_con_handle: JoinHandle<()>,
 }
 
 impl From<TcpListener> for Server {
     fn from(listener: TcpListener) -> Self {
         let (lost_con_tx, mut lost_con_rx) = mpsc::channel(16);
+        let config: ServerConfig = fs::read_to_string("server_config.yml")
+            .ok()
+            .and_then(|content| serde_yaml::from_str(&content).ok())
+            .unwrap_or_default();
+            
         let state = Arc::new(ServerState {
+            config,
             sessions: IdMap::default(),
             users: SafeMap::default(),
-
             rooms: SafeMap::default(),
-
             lost_con_tx,
         });
+
         let lost_con_handle = tokio::spawn({
             let state = Arc::clone(&state);
             async move {
@@ -80,7 +95,6 @@ impl From<TcpListener> for Server {
         Self {
             listener,
             state,
-
             lost_con_handle,
         }
     }
